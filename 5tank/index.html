@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tank Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: #222;
+            font-family: Arial, sans-serif;
+            color: #fff;
+        }
+        
+        h1 {
+            margin: 0 0 10px 0;
+        }
+        
+        .info {
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+        
+        canvas {
+            border: 3px solid #444;
+            background-color: #1a1a1a;
+            display: block;
+            cursor: crosshair;
+        }
+        
+        .controls {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 14px;
+        }
+        
+        .controls p {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Tank Game</h1>
+    <div class="info">
+        <div>Score: <span id="score">0</span> | Health: <span id="health">100</span> | <span id="enemies">Wave: 0 | Enemies: 5</span></div>
+    </div>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div class="controls">
+        <p><strong>Controls:</strong></p>
+        <p>Arrow Keys: Move | SPACEBAR: Shoot | M: Mute Music</p>
+        <p>Endless survival! New enemies spawn every few seconds - survive as long as you can!</p>
+    </div>
+
+    <script>
+// Tank Game - All in One File
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Game world (bigger than canvas)
+const WORLD_WIDTH = 2400;
+const WORLD_HEIGHT = 2400;
+const VIEWPORT_WIDTH = canvas.width;
+const VIEWPORT_HEIGHT = canvas.height;
+
+// Camera
+const camera = {
+    x: 0,
+    y: 0
+};
+
+// Game state
+const game = {
+    score: 0,
+    health: 100,
+    gameOver: false,
+    wave: 0,
+    lastSpawnTime: 0,
+    spawnInterval: 8000
+};
+
+// Classes
+class Tank {
+    constructor(x, y, isPlayer = false) {
+        this.x = x;
+        this.y = y;
+        this.width = 30;
+        this.height = 30;
+        this.angle = 0;
+        this.speed = isPlayer ? 4 : 2;
+        this.turretAngle = 0;
+        this.health = 100;
+        this.isPlayer = isPlayer;
+        this.color = isPlayer ? '#0f0' : '#f00';
+        this.lastShot = 0;
+        this.shootCooldown = isPlayer ? 300 : 1000;
+    }
+
+    draw(offsetX, offsetY) {
+        ctx.save();
+        ctx.translate(this.x - offsetX, this.y - offsetY);
+        ctx.rotate(this.angle);
+        
+        // Tank body
+        ctx.fillStyle = this.color;
+        ctx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+        
+        // Tank direction indicator
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(this.width / 4, 0, 4, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Turret
+        ctx.rotate(this.turretAngle - this.angle);
+        ctx.fillStyle = this.color;
+        ctx.fillRect(0, -4, 20, 8);
+        
+        ctx.restore();
+
+        // Health bar
+        if (!this.isPlayer) {
+            ctx.fillStyle = '#f00';
+            ctx.fillRect(this.x - offsetX - this.width / 2, this.y - offsetY - this.height / 2 - 10, 30, 4);
+            ctx.fillStyle = '#0f0';
+            ctx.fillRect(this.x - offsetX - this.width / 2, this.y - offsetY - this.height / 2 - 10, 30 * (this.health / 100), 4);
+        }
+    }
+
+    update() {
+        this.x = Math.max(this.width / 2, Math.min(WORLD_WIDTH - this.width / 2, this.x));
+        this.y = Math.max(this.height / 2, Math.min(WORLD_HEIGHT - this.height / 2, this.y));
+    }
+
+    moveTank(moveForward) {
+        const direction = moveForward ? 1 : -1;
+        this.x += Math.cos(this.angle - Math.PI / 2) * this.speed * direction;
+        this.y += Math.sin(this.angle - Math.PI / 2) * this.speed * direction;
+    }
+
+    rotateTurret(angle) {
+        this.turretAngle = angle;
+    }
+
+    shoot(bullets) {
+        const now = Date.now();
+        if (now - this.lastShot > this.shootCooldown) {
+            const startX = this.x + Math.cos(this.turretAngle) * 20;
+            const startY = this.y + Math.sin(this.turretAngle) * 20;
+            bullets.push(new Projectile(startX, startY, this.turretAngle, this.isPlayer));
+            this.lastShot = now;
+            playSound('shoot');
+        }
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        return this.health <= 0;
+    }
+}
+
+class Projectile {
+    constructor(x, y, angle, isPlayerBullet) {
+        this.x = x;
+        this.y = y;
+        this.angle = angle;
+        this.speed = 7;
+        this.radius = 4;
+        this.isPlayerBullet = isPlayerBullet;
+        this.color = isPlayerBullet ? '#0f0' : '#ff0';
+    }
+
+    draw(offsetX, offsetY) {
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x - offsetX, this.y - offsetY, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    update() {
+        this.x += Math.cos(this.angle) * this.speed;
+        this.y += Math.sin(this.angle) * this.speed;
+    }
+
+    isOffscreen() {
+        return this.x < 0 || this.x > WORLD_WIDTH || this.y < 0 || this.y > WORLD_HEIGHT;
+    }
+}
+
+class Explosion {
+    constructor(x, y, size = 15) {
+        this.x = x;
+        this.y = y;
+        this.radius = 0;
+        this.maxRadius = size;
+        this.life = 15;
+    }
+
+    draw(offsetX, offsetY) {
+        ctx.fillStyle = `rgba(255, 100, 0, ${this.life / 15})`;
+        ctx.beginPath();
+        ctx.arc(this.x - offsetX, this.y - offsetY, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    update() {
+        this.radius += this.maxRadius / this.life;
+        this.life--;
+    }
+
+    isAlive() {
+        return this.life > 0;
+    }
+}
+
+// Game objects
+let playerTank = new Tank(WORLD_WIDTH / 2, WORLD_HEIGHT - 150, true);
+let enemies = generateEnemies(5);
+let bullets = [];
+let explosions = [];
+
+// Input handling
+const keys = {};
+const mouse = { x: canvas.width / 2, y: canvas.height / 2, leftDown: false };
+
+window.addEventListener('keydown', (e) => {
+    keys[e.key] = true;
+    if (e.key === ' ') {
+        e.preventDefault();
+        playerTank.shoot(bullets);
+    }
+    if (e.key.toLowerCase() === 'm') {
+        toggleMute();
+    }
+});
+
+window.addEventListener('keyup', (e) => {
+    keys[e.key] = false;
+});
+
+canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = e.clientX - rect.left + camera.x;
+    mouse.y = e.clientY - rect.top + camera.y;
+});
+
+canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0) mouse.leftDown = true;
+});
+
+canvas.addEventListener('mouseup', (e) => {
+    if (e.button === 0) mouse.leftDown = false;
+});
+
+// Game functions
+function generateEnemies(count) {
+    const newEnemies = [];
+    for (let i = 0; i < count; i++) {
+        let x, y;
+        // Spawn enemies near the player at a random angle and distance
+        const angle = Math.random() * Math.PI * 2;
+        const distance = 300 + Math.random() * 200; // 300-500 units from player
+        x = playerTank.x + Math.cos(angle) * distance;
+        y = playerTank.y + Math.sin(angle) * distance;
+        
+        // Keep within world bounds
+        x = Math.max(0, Math.min(WORLD_WIDTH, x));
+        y = Math.max(0, Math.min(WORLD_HEIGHT, y));
+        
+        newEnemies.push(new Tank(x, y, false));
+    }
+    return newEnemies;
+}
+
+function updateEnemy(enemy, playerTank) {
+    const dx = playerTank.x - enemy.x;
+    const dy = playerTank.y - enemy.y;
+    const distance = Math.hypot(dx, dy);
+
+    // Move toward player
+    if (distance > 0) {
+        const moveAngle = Math.atan2(dy, dx);
+        enemy.angle = moveAngle;
+        enemy.moveTank(true);
+    }
+
+    // Aim turret at player
+    const turretAngle = Math.atan2(playerTank.y - enemy.y, playerTank.x - enemy.x);
+    enemy.rotateTurret(turretAngle);
+
+    // Shoot when close enough
+    if (distance < 500 && Math.random() < 0.015) {
+        enemy.shoot(bullets);
+    }
+
+    enemy.update();
+}
+
+function checkCollisions() {
+    // Tank-to-tank collisions
+    const allTanks = [playerTank, ...enemies];
+    for (let i = 0; i < allTanks.length; i++) {
+        for (let j = i + 1; j < allTanks.length; j++) {
+            const tank1 = allTanks[i];
+            const tank2 = allTanks[j];
+            const distance = Math.hypot(tank1.x - tank2.x, tank1.y - tank2.y);
+            const minDistance = (tank1.width + tank2.width) / 2;
+            
+            if (distance < minDistance) {
+                const angle = Math.atan2(tank2.y - tank1.y, tank2.x - tank1.x);
+                const overlap = minDistance - distance;
+                const pushDistance = overlap / 2 + 3;
+                
+                tank1.x -= Math.cos(angle) * pushDistance;
+                tank1.y -= Math.sin(angle) * pushDistance;
+                tank2.x += Math.cos(angle) * pushDistance;
+                tank2.y += Math.sin(angle) * pushDistance;
+                
+                tank1.update();
+                tank2.update();
+            }
+        }
+    }
+    
+    // Bullet collisions
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        const bullet = bullets[i];
+        
+        if (!bullet.isPlayerBullet) {
+            const distance = Math.hypot(bullet.x - playerTank.x, bullet.y - playerTank.y);
+            if (distance < playerTank.width / 2 + bullet.radius) {
+                explosions.push(new Explosion(bullet.x, bullet.y, 20));
+                game.health -= 10;
+                playSound('damage');
+                bullets.splice(i, 1);
+                if (game.health <= 0) {
+                    game.gameOver = true;
+                }
+                continue;
+            }
+        }
+        
+        for (let j = enemies.length - 1; j >= 0; j--) {
+            const enemy = enemies[j];
+            const distance = Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y);
+            
+            if (distance < enemy.width / 2 + bullet.radius) {
+                explosions.push(new Explosion(bullet.x, bullet.y, 15));
+                
+                if (bullet.isPlayerBullet) {
+                    game.score += 100;
+                    playSound('hit');
+                }
+                
+                if (enemy.takeDamage(50)) {
+                    enemies.splice(j, 1);
+                    playSound('hit');
+                    explosions.push(new Explosion(enemy.x, enemy.y, 25));
+                }
+                if (i < bullets.length) {
+                    bullets.splice(i, 1);
+                }
+                break;
+            }
+        }
+    }
+}
+
+function updateGame() {
+    if (game.gameOver) return;
+
+    // Update player tank
+    if (keys['ArrowUp'] || keys['w'] || keys['W']) {
+        playerTank.moveTank(true);
+    }
+    if (keys['ArrowDown'] || keys['s'] || keys['S']) {
+        playerTank.moveTank(false);
+    }
+    if (keys['ArrowLeft'] || keys['a'] || keys['A']) {
+        playerTank.angle -= 0.15;
+    }
+    if (keys['ArrowRight'] || keys['d'] || keys['D']) {
+        playerTank.angle += 0.15;
+    }
+
+    const turretAngle = Math.atan2(mouse.y - playerTank.y, mouse.x - playerTank.x);
+    playerTank.rotateTurret(turretAngle);
+
+    // Continuous shooting while mouse is held
+    if (mouse.leftDown) {
+        playerTank.shoot(bullets);
+    }
+
+    playerTank.update();
+
+    // Update camera to follow player
+    camera.x = playerTank.x - VIEWPORT_WIDTH / 2;
+    camera.y = playerTank.y - VIEWPORT_HEIGHT / 2;
+    
+    camera.x = Math.max(0, Math.min(WORLD_WIDTH - VIEWPORT_WIDTH, camera.x));
+    camera.y = Math.max(0, Math.min(WORLD_HEIGHT - VIEWPORT_HEIGHT, camera.y));
+
+    // Update enemies
+    for (let enemy of enemies) {
+        updateEnemy(enemy, playerTank);
+    }
+
+    // Update projectiles
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        bullets[i].update();
+        if (bullets[i].isOffscreen()) {
+            bullets.splice(i, 1);
+        }
+    }
+
+    // Update explosions
+    for (let i = explosions.length - 1; i >= 0; i--) {
+        explosions[i].update();
+        if (!explosions[i].isAlive()) {
+            explosions.splice(i, 1);
+        }
+    }
+
+    checkCollisions();
+
+    // Progressive enemy spawning based on kills
+    const killsCount = game.score / 100;
+    const now = Date.now();
+    
+    const baseInterval = 8000;
+    const finalInterval = 2000;
+    const killMultiplier = Math.min(killsCount * 100, 6000);
+    const currentInterval = Math.max(finalInterval, baseInterval - killMultiplier);
+    
+    if (now - game.lastSpawnTime > currentInterval) {
+        const baseEnemies = 1;
+        const killBonus = Math.floor(killsCount / 5);
+        const enemiesToSpawn = Math.min(baseEnemies + killBonus, 5);
+        
+        for (let i = 0; i < enemiesToSpawn; i++) {
+            const newEnemies = generateEnemies(1);
+            enemies.push(...newEnemies);
+        }
+        game.wave++;
+        game.lastSpawnTime = now;
+    }
+}
+
+function drawGame() {
+    // Clear canvas
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Draw world boundaries
+    ctx.strokeStyle = '#666';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(-camera.x, -camera.y, WORLD_WIDTH, WORLD_HEIGHT);
+
+    // Draw grid
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    const gridSize = 100;
+    const startX = Math.floor(camera.x / gridSize) * gridSize;
+    const startY = Math.floor(camera.y / gridSize) * gridSize;
+    
+    for (let x = startX; x < startX + VIEWPORT_WIDTH + gridSize; x += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(x - camera.x, -camera.y);
+        ctx.lineTo(x - camera.x, WORLD_HEIGHT - camera.y);
+        ctx.stroke();
+    }
+    for (let y = startY; y < startY + VIEWPORT_HEIGHT + gridSize; y += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(-camera.x, y - camera.y);
+        ctx.lineTo(WORLD_WIDTH - camera.x, y - camera.y);
+        ctx.stroke();
+    }
+
+    // Draw player tank
+    playerTank.draw(camera.x, camera.y);
+
+    // Draw enemies
+    for (let enemy of enemies) {
+        enemy.draw(camera.x, camera.y);
+    }
+
+    // Draw projectiles
+    for (let bullet of bullets) {
+        bullet.draw(camera.x, camera.y);
+    }
+
+    // Draw explosions
+    for (let explosion of explosions) {
+        explosion.draw(camera.x, camera.y);
+    }
+
+    // Draw UI
+    document.getElementById('score').textContent = game.score;
+    document.getElementById('health').textContent = Math.max(0, Math.floor(game.health));
+    document.getElementById('enemies').textContent = `Wave: ${game.wave} | Enemies: ${enemies.length}`;
+
+    // Draw game over message
+    if (game.gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#f00';
+        ctx.font = 'bold 48px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 30);
+        ctx.font = '20px Arial';
+        ctx.fillText(`Wave: ${game.wave} | Final Score: ${game.score}`, canvas.width / 2, canvas.height / 2 + 20);
+    }
+}
+
+// Audio effects
+const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+let isMuted = false;
+
+function playSound(type) {
+    if (isMuted || audioContext.state === 'suspended') return;
+
+    try {
+        const now = audioContext.currentTime;
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+
+        if (type === 'shoot') {
+            osc.frequency.setValueAtTime(400, now);
+            osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
+            gain.gain.setValueAtTime(0.3, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            osc.start(now);
+            osc.stop(now + 0.1);
+        } else if (type === 'hit') {
+            osc.frequency.setValueAtTime(300, now);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+            osc.start(now);
+            osc.stop(now + 0.15);
+        } else if (type === 'damage') {
+            osc.frequency.setValueAtTime(100, now);
+            osc.frequency.exponentialRampToValueAtTime(50, now + 0.2);
+            gain.gain.setValueAtTime(0.3, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+            osc.start(now);
+            osc.stop(now + 0.2);
+        }
+    } catch (e) {
+        // Audio not available
+    }
+}
+
+function toggleMute() {
+    isMuted = !isMuted;
+}
+
+// Game loop
+function gameLoop() {
+    updateGame();
+    drawGame();
+    requestAnimationFrame(gameLoop);
+}
+
+// Initialize camera position
+camera.x = playerTank.x - VIEWPORT_WIDTH / 2;
+camera.y = playerTank.y - VIEWPORT_HEIGHT / 2;
+camera.x = Math.max(0, Math.min(WORLD_WIDTH - VIEWPORT_WIDTH, camera.x));
+camera.y = Math.max(0, Math.min(WORLD_HEIGHT - VIEWPORT_HEIGHT, camera.y));
+
+// Start game
+gameLoop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultimate Platformer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Arial', sans-serif;
+        }
+        
+        #gameContainer {
+            position: relative;
+            background: #87CEEB;
+        }
+        
+        canvas {
+            display: block;
+            border: 4px solid #333;
+            background: linear-gradient(to bottom, #87CEEB 0%, #E0F6FF 100%);
+            image-rendering: pixelated;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 18px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+            z-index: 100;
+        }
+        
+        .ui-item {
+            margin-bottom: 10px;
+        }
+        
+        #levelInfo {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: white;
+            font-size: 16px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+        }
+        
+        #gameOver, #levelComplete {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 40px;
+            border-radius: 10px;
+            text-align: center;
+            z-index: 1000;
+            display: none;
+            font-size: 24px;
+        }
+        
+        #gameOver h1, #levelComplete h1 {
+            margin-bottom: 20px;
+            font-size: 40px;
+        }
+        
+        #gameOver p, #levelComplete p {
+            margin-bottom: 20px;
+        }
+        
+        .controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: rgba(255,255,255,0.8);
+            font-size: 12px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="ui">
+            <div class="ui-item">❤️ Health: <span id="health">3</span></div>
+            <div class="ui-item">💰 Coins: <span id="coins">0</span>/10</div>
+            <div class="ui-item">⚡ Speed: <span id="speedBoost">0%</span></div>
+        </div>
+        <div id="levelInfo">
+            <div>Level: <span id="level">1</span></div>
+            <div>FPS: <span id="fps">60</span></div>
+        </div>
+        <div id="gameOver">
+            <h1>GAME OVER</h1>
+            <p id="gameOverText">You died!</p>
+            <p>Press R to restart or click to go to menu</p>
+        </div>
+        <div id="levelComplete">
+            <h1>LEVEL COMPLETE!</h1>
+            <p id="levelCompleteText">Great job!</p>
+            <p>Press N for next level or click</p>
+        </div>
+        <div class="controls">
+            <div>← → or A/D: Move | SPACE: Jump | Shift: Dash</div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game states
+        const GAME_STATE = {
+            PLAYING: 0,
+            GAME_OVER: 1,
+            LEVEL_COMPLETE: 2
+        };
+        
+        // Global game state
+        let gameState = GAME_STATE.PLAYING;
+        let currentLevel = 1;
+        let health = 3;
+        let coins = 0;
+        let speedBoostActive = 0;
+        
+        // Player object
+        const player = {
+            x: 50,
+            y: 300,
+            width: 24,
+            height: 32,
+            velX: 0,
+            velY: 0,
+            speed: 5,
+            jumpPower: 12,
+            grounded: false,
+            jumpsRemaining: 1,
+            maxJumps: 1,
+            canDoubleJump: false,
+            dashCooldown: 0,
+            dashSpeed: 15,
+            canDash: true,
+            
+            update() {
+                // Apply gravity
+                const GRAVITY = 0.6;
+                this.velY += GRAVITY;
+                
+                // Terminal velocity
+                if (this.velY > 16) this.velY = 16;
+                
+                // Horizontal movement
+                let moveSpeed = this.speed;
+                if (speedBoostActive > 0) {
+                    moveSpeed *= 1.5;
+                }
+                
+                if (keys.ArrowLeft || keys.a) {
+                    this.velX = -moveSpeed;
+                }
+                if (keys.ArrowRight || keys.d) {
+                    this.velX = moveSpeed;
+                }
+                if (!keys.ArrowLeft && !keys.ArrowRight && !keys.a && !keys.d) {
+                    this.velX *= 0.8; // Friction
+                }
+                
+                // Jumping
+                if ((keys[' '] || keys.w) && this.grounded) {
+                    this.velY = -this.jumpPower;
+                    this.grounded = false;
+                    this.jumpsRemaining--;
+                }
+                
+                // Double jump
+                if (this.canDoubleJump && (keys[' '] || keys.w) && !this.grounded && this.jumpsRemaining > 0) {
+                    this.velY = -this.jumpPower * 0.9;
+                    this.jumpsRemaining--;
+                }
+                
+                // Dash
+                if ((keys.Shift) && this.canDash && this.dashCooldown <= 0) {
+                    this.velX = (keys.ArrowRight || keys.d) ? this.dashSpeed : 
+                               (keys.ArrowLeft || keys.a) ? -this.dashSpeed : 
+                               this.velX > 0 ? this.dashSpeed : -this.dashSpeed;
+                    this.dashCooldown = 60;
+                    this.canDash = false;
+                }
+                
+                // Reset grounded
+                this.grounded = false;
+                
+                // Update position
+                this.x += this.velX;
+                this.y += this.velY;
+                
+                // Collision with platforms
+                for (let platform of platforms) {
+                    if (this.checkCollisionWith(platform)) {
+                        if (this.velY > 0) { // Landing on top
+                            this.y = platform.y - this.height;
+                            this.velY = 0;
+                            this.grounded = true;
+                            this.jumpsRemaining = this.maxJumps;
+                            this.canDash = true;
+                        } else if (this.velY < 0) { // Hitting head
+                            this.y = platform.y + platform.height;
+                            this.velY = 0;
+                        }
+                    }
+                }
+                
+                // Collision with enemies
+                enemies = enemies.filter(enemy => {
+                    if (this.checkCollisionWith(enemy)) {
+                        // Stomp on enemy if landing from above
+                        if (this.velY > 0 && this.y + this.height - this.velY <= enemy.y + 5) {
+                            this.velY = -8; // Bounce
+                            return false; // Remove enemy
+                        } else {
+                            this.takeDamage();
+                        }
+                    }
+                    return true;
+                });
+                
+                // Collision with coins
+                coins_arr = coins_arr.filter(coin => {
+                    if (this.checkCollisionWith(coin)) {
+                        coins++;
+                        return false;
+                    }
+                    return true;
+                });
+                
+                // Collision with power-ups
+                powerUps = powerUps.filter(powerUp => {
+                    if (this.checkCollisionWith(powerUp)) {
+                        powerUp.activate();
+                        return false;
+                    }
+                    return true;
+                });
+                
+                // Collision with goal
+                if (this.checkCollisionWith(goal)) {
+                    gameState = GAME_STATE.LEVEL_COMPLETE;
+                }
+                
+                // Boundaries
+                if (this.x < 0) this.x = 0;
+                if (this.x + this.width > canvas.width) this.x = canvas.width - this.width;
+                
+                // Fall to death
+                if (this.y > canvas.height) {
+                    this.takeDamage();
+                }
+                
+                if (this.dashCooldown > 0) {
+                    this.dashCooldown--;
+                }
+                
+                // Update UI
+                document.getElementById('health').textContent = health;
+                document.getElementById('coins').textContent = coins;
+                document.getElementById('speedBoost').textContent = speedBoostActive > 0 ? '⚡' : '0%';
+            },
+            
+            checkCollisionWith(rect) {
+                return this.x < rect.x + rect.width &&
+                       this.x + this.width > rect.x &&
+                       this.y < rect.y + rect.height &&
+                       this.y + this.height > rect.y;
+            },
+            
+            takeDamage() {
+                health--;
+                if (health <= 0) {
+                    gameState = GAME_STATE.GAME_OVER;
+                } else {
+                    this.reset();
+                }
+            },
+            
+            reset() {
+                this.x = 50;
+                this.y = 300;
+                this.velX = 0;
+                this.velY = 0;
+            },
+            
+            draw() {
+                // Body
+                ctx.fillStyle = '#FF6B6B';
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                
+                // Eyes
+                ctx.fillStyle = 'white';
+                ctx.fillRect(this.x + 6, this.y + 8, 4, 4);
+                ctx.fillRect(this.x + 14, this.y + 8, 4, 4);
+                
+                // Pupils
+                ctx.fillStyle = 'black';
+                const pupilX = this.velX > 0 ? 2 : 0;
+                ctx.fillRect(this.x + 6 + pupilX, this.y + 8, 2, 2);
+                ctx.fillRect(this.x + 14 + pupilX, this.y + 8, 2, 2);
+                
+                // Smile
+                ctx.strokeStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(this.x + 12, this.y + 18, 3, 0, Math.PI);
+                ctx.stroke();
+            }
+        };
+        
+        // Platforms
+        let platforms = [];
+        
+        // Enemies
+        let enemies = [];
+        
+        // Coins
+        let coins_arr = [];
+        
+        // Power-ups
+        let powerUps = [];
+        
+        // Goal
+        let goal = {};
+        
+        // Input
+        const keys = {};
+        
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if (e.key === 'r' || e.key === 'R') {
+                if (gameState === GAME_STATE.GAME_OVER) {
+                    restartGame();
+                }
+            }
+            if (e.key === 'n' || e.key === 'N') {
+                if (gameState === GAME_STATE.LEVEL_COMPLETE) {
+                    nextLevel();
+                }
+            }
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+        
+        // Level loading
+        function loadLevel(levelNum) {
+            platforms = [];
+            enemies = [];
+            coins_arr = [];
+            powerUps = [];
+            player.reset();
+            speedBoostActive = 0;
+            gameState = GAME_STATE.PLAYING;
+            
+            if (levelNum === 1) {
+                // Ground
+                platforms.push({x: 0, y: 550, width: 800, height: 50});
+                
+                // Platform sequence
+                platforms.push({x: 150, y: 480, width: 100, height: 20});
+                platforms.push({x: 300, y: 420, width: 100, height: 20});
+                platforms.push({x: 450, y: 360, width: 100, height: 20});
+                platforms.push({x: 600, y: 300, width: 100, height: 20});
+                
+                // Coins
+                for (let i = 1; i <= 5; i++) {
+                    coins_arr.push({x: 150 + (i * 130) - 50, y: 380 - (i * 60), width: 16, height: 16});
+                }
+                
+                // Enemies
+                enemies.push({x: 250, y: 540, width: 20, height: 20, velX: 2, minX: 200, maxX: 350, type: 'walker'});
+                enemies.push({x: 500, y: 350, width: 20, height: 20, velX: 2, minX: 450, maxX: 600, type: 'flyer', wobbleOffset: 0});
+                
+                // Power-up
+                powerUps.push({
+                    x: 300, y: 350, width: 16, height: 16, type: 'speedBoost',
+                    activate() {
+                        speedBoostActive = 300;
+                    },
+                    draw() {
+                        ctx.fillStyle = '#FFD700';
+                        ctx.fillRect(this.x, this.y, this.width, this.height);
+                        ctx.fillStyle = 'black';
+                        ctx.font = '12px Arial';
+                        ctx.fillText('⚡', this.x + 2, this.y + 12);
+                    }
+                });
+                
+                goal = {x: 700, y: 470, width: 40, height: 40};
+                
+            } else if (levelNum === 2) {
+                // Ground
+                platforms.push({x: 0, y: 550, width: 800, height: 50});
+                
+                // Moving platforms
+                platforms.push({x: 100, y: 480, width: 80, height: 15});
+                platforms.push({x: 250, y: 420, width: 80, height: 15});
+                platforms.push({x: 400, y: 360, width: 80, height: 15});
+                platforms.push({x: 550, y: 300, width: 80, height: 15});
+                
+                // Difficult jumps
+                platforms.push({x: 150, y: 250, width: 60, height: 15});
+                platforms.push({x: 500, y: 220, width: 60, height: 15});
+                
+                // Coins
+                for (let i = 0; i < 10; i++) {
+                    const x = 100 + Math.random() * 600;
+                    const y = 50 + Math.random() * 400;
+                    coins_arr.push({x: x, y: y, width: 16, height: 16});
+                }
+                
+                // More enemies
+                enemies.push({x: 100, y: 540, width: 20, height: 20, velX: 3, minX: 50, maxX: 400, type: 'walker'});
+                enemies.push({x: 400, y: 300, width: 20, height: 20, velX: 2, minX: 350, maxX: 550, type: 'flyer', wobbleOffset: 1});
+                enemies.push({x: 600, y: 400, width: 20, height: 20, velX: 2, minX: 550, maxX: 750, type: 'walker'});
+                
+                // Double jump upgrade
+                powerUps.push({
+                    x: 150, y: 200, width: 16, height: 16, type: 'doubleJump',
+                    activate() {
+                        player.canDoubleJump = true;
+                        player.maxJumps = 2;
+                    },
+                    draw() {
+                        ctx.fillStyle = '#FF69B4';
+                        ctx.fillRect(this.x, this.y, this.width, this.height);
+                        ctx.fillStyle = 'white';
+                        ctx.font = '12px Arial';
+                        ctx.fillText('🦘', this.x, this.y + 12);
+                    }
+                });
+                
+                goal = {x: 700, y: 470, width: 40, height: 40};
+                
+            } else if (levelNum === 3) {
+                // Ground
+                platforms.push({x: 0, y: 550, width: 800, height: 50});
+                
+                // Challenge level
+                platforms.push({x: 100, y: 480, width: 50, height: 15});
+                platforms.push({x: 200, y: 420, width: 50, height: 15});
+                platforms.push({x: 300, y: 360, width: 50, height: 15});
+                platforms.push({x: 400, y: 300, width: 50, height: 15});
+                platforms.push({x: 500, y: 240, width: 50, height: 15});
+                platforms.push({x: 600, y: 180, width: 50, height: 15});
+                
+                // Lots of coins
+                for (let i = 0; i < 15; i++) {
+                    const x = 50 + (i * 50);
+                    const y = 300 - (i * 30);
+                    if (y > 0) coins_arr.push({x: x, y: y, width: 16, height: 16});
+                }
+                
+                // Challenging enemies - mix of types
+                for (let i = 0; i < 4; i++) {
+                    const type = i % 2 === 0 ? 'walker' : 'flyer';
+                    enemies.push({
+                        x: 150 + i * 150,
+                        y: type === 'walker' ? 540 : 200 + i * 40,
+                        width: 20,
+                        height: 20,
+                        velX: 3 + i * 0.5,
+                        minX: 100 + i * 150,
+                        maxX: 250 + i * 150,
+                        type: type,
+                        wobbleOffset: i
+                    });
+                }
+                
+                goal = {x: 650, y: 80, width: 40, height: 40};
+            }
+            
+            document.getElementById('level').textContent = levelNum;
+        }
+        
+        function nextLevel() {
+            currentLevel++;
+            if (currentLevel > 3) currentLevel = 3; // Max 3 levels for now
+            coins = 0;
+            health = 3;
+            loadLevel(currentLevel);
+        }
+        
+        function restartGame() {
+            currentLevel = 1;
+            health = 3;
+            coins = 0;
+            speedBoostActive = 0;
+            player.canDoubleJump = false;
+            player.maxJumps = 1;
+            loadLevel(1);
+        }
+        
+        // Enemy AI
+        function updateEnemies() {
+            for (let enemy of enemies) {
+                if (enemy.type === 'walker') {
+                    enemy.x += enemy.velX;
+                    if (enemy.x <= enemy.minX || enemy.x >= enemy.maxX) {
+                        enemy.velX *= -1;
+                    }
+                } else if (enemy.type === 'flyer') {
+                    enemy.x += enemy.velX;
+                    enemy.y += Math.sin(Date.now() / 500 + enemy.wobbleOffset) * 0.5;
+                    if (enemy.x <= enemy.minX || enemy.x >= enemy.maxX) {
+                        enemy.velX *= -1;
+                    }
+                }
+            }
+        }
+        
+        // Drawing functions
+        function drawPlatforms() {
+            ctx.fillStyle = '#8B4513';
+            for (let platform of platforms) {
+                ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+                ctx.strokeStyle = '#654321';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(platform.x, platform.y, platform.width, platform.height);
+            }
+        }
+        
+        function drawEnemies() {
+            for (let enemy of enemies) {
+                if (enemy.type === 'walker') {
+                    // Green walkerplayer
+                    ctx.fillStyle = '#4CAF50';
+                    ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+                    
+                    // Eyes
+                    ctx.fillStyle = 'white';
+                    ctx.fillRect(enemy.x + 3, enemy.y + 3, 3, 3);
+                    ctx.fillRect(enemy.x + 14, enemy.y + 3, 3, 3);
+                    
+                    // Angry mouth
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(enemy.x + 6, enemy.y + 12);
+                    ctx.lineTo(enemy.x + 14, enemy.y + 12);
+                    ctx.stroke();
+                } else if (enemy.type === 'flyer') {
+                    // Purple flying spike enemy
+                    ctx.fillStyle = '#9C27B0';
+                    // Body
+                    ctx.beginPath();
+                    ctx.arc(enemy.x + 10, enemy.y + 10, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Spike on top
+                    ctx.fillStyle = '#E91E63';
+                    ctx.beginPath();
+                    ctx.moveTo(enemy.x + 10, enemy.y);
+                    ctx.lineTo(enemy.x + 6, enemy.y + 6);
+                    ctx.lineTo(enemy.x + 14, enemy.y + 6);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Eyes
+                    ctx.fillStyle = 'white';
+                    ctx.fillRect(enemy.x + 5, enemy.y + 8, 2, 2);
+                    ctx.fillRect(enemy.x + 13, enemy.y + 8, 2, 2);
+                    
+                    // Pupils
+                    ctx.fillStyle = 'black';
+                    ctx.fillRect(enemy.x + 5, enemy.y + 8, 2, 2);
+                    ctx.fillRect(enemy.x + 13, enemy.y + 8, 2, 2);
+                }
+            }
+        }
+        
+        function drawCoins() {
+            ctx.fillStyle = '#FFD700';
+            for (let coin of coins_arr) {
+                ctx.beginPath();
+                ctx.arc(coin.x + 8, coin.y + 8, 8, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.strokeStyle = '#FFA500';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+        }
+        
+        function drawPowerUps() {
+            for (let powerUp of powerUps) {
+                powerUp.draw();
+            }
+        }
+        
+        function drawGoal() {
+            ctx.fillStyle = '#FF1493';
+            ctx.fillRect(goal.x, goal.y, goal.width, goal.height);
+            
+            ctx.fillStyle = 'yellow';
+            ctx.font = '24px Arial';
+            ctx.fillText('🚩', goal.x + 8, goal.y + 24);
+        }
+        
+        // FPS counter
+        let lastTime = 0;
+        let fps = 60;
+        let frameCount = 0;
+        let lastFpsUpdate = 0;
+        
+        function update() {
+            if (gameState === GAME_STATE.PLAYING) {
+                player.update();
+                updateEnemies();
+                
+                if (speedBoostActive > 0) {
+                    speedBoostActive--;
+                }
+            }
+        }
+        
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = '#87CEEB';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawPlatforms();
+            drawCoins();
+            drawPowerUps();
+            drawEnemies();
+            drawGoal();
+            player.draw();
+            
+            // Draw UI overlays
+            if (gameState === GAME_STATE.GAME_OVER) {
+                document.getElementById('gameOver').style.display = 'block';
+            } else {
+                document.getElementById('gameOver').style.display = 'none';
+            }
+            
+            if (gameState === GAME_STATE.LEVEL_COMPLETE) {
+                document.getElementById('levelComplete').style.display = 'block';
+                document.getElementById('levelCompleteText').textContent = `Level ${currentLevel} complete! Coins: ${coins}/10`;
+            } else {
+                document.getElementById('levelComplete').style.display = 'none';
+            }
+            
+            // FPS counter
+            frameCount++;
+            const now = performance.now();
+            if (now - lastFpsUpdate >= 1000) {
+                fps = frameCount;
+                frameCount = 0;
+                lastFpsUpdate = now;
+            }
+            document.getElementById('fps').textContent = fps;
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game
+        loadLevel(1);
+        gameLoop();
+    </script>
+</body>
+</html>
